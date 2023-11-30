@@ -1,0 +1,187 @@
+###############################OLD DB & OS Config###############################
+-bash-4.2$ rpm -qa | grep mariadb
+mariadb-5.5.56-2.el7.x86_64
+mariadb-libs-5.5.56-2.el7.x86_64
+mariadb-server-5.5.56-2.el7.x86_64
+
+-bash-4.2$ cat /etc/redhat-release
+Red Hat Enterprise Linux Server release 7.4 (Maipo)
+
+############################## MySQL 8 Binary install ##############################
+Mount       Size
+------     ------
+/db_backup  2GB
+/datafile   8GB
+
+CPU: 2
+RAM: 6GB
+
+[root@test-db dbteam]# unzip -q MySQL8.0.35_Enterprise.zip
+[root@test-db dbteam]# pwd
+/home/dbteam
+[root@test-db dbteam]#
+
+dnf install mysql-commercial-client-plugins-8.0.35-1.1.el9.x86_64.rpm mysql-commercial-libs-8.0.35-1.1.el9.x86_64.rpm \
+mysql-commercial-client-8.0.35-1.1.el9.x86_64.rpm mysql-commercial-common-8.0.35-1.1.el9.x86_64.rpm \
+mysql-commercial-icu-data-files-8.0.35-1.1.el9.x86_64.rpm mysql-commercial-server-8.0.35-1.1.el9.x86_64.rpm
+
+[root@test-db dbteam]# cat /etc/my.cnf
+[mysqld]
+
+socket=/var/lib/mysql/mysql.sock
+pid-file=/var/run/mysqld/mysqld.pid
+
+sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES
+
+#User Define Configuration
+bind-address = 10.10.10.80
+skip-external-locking
+key_buffer_size = 16M
+table_open_cache = 64
+sort_buffer_size = 512K
+net_buffer_length = 8K
+read_buffer_size = 256K
+read_rnd_buffer_size = 512K
+myisam_sort_buffer_size = 8M
+max_connections = 1500
+max_connect_errors = 10000
+innodb_autoextend_increment = 10
+innodb_buffer_pool_size = 3072M
+innodb_file_per_table
+#innodb_log_files_in_group = 3 #no need mysql 8
+#innodb_log_file_size = 256M #no need mysql 8
+innodb_redo_log_capacity=536870912 #512MB
+innodb_log_buffer_size = 8M
+innodb_open_files = 1000
+open-files-limit = 8192
+
+max_allowed_packet=256M
+transaction-isolation=READ-COMMITTED
+
+#data path
+datadir=/datafile/mysql8.0.35
+
+log-error=/var/log/mysqld.log
+
+#Binary Log Settings
+log-bin = /db_backup/binlog/master-bin
+log-bin-index = /db_backup/binlog/master-bin.index
+relay-log=/db_backup/binlog/ims-relay-bin
+relay-log-index = /db_backup/binlog/ims-relay-bin.index
+server-id = 1
+binlog_expire_logs_seconds = 604800
+max_binlog_size=100M
+gtid_mode=ON
+enforce-gtid-consistency=ON
+binlog_checksum=NONE
+binlog_cache_size=32K
+sync_binlog=1
+
+[root@test-db dbteam]#
+
+[root@test-db mysql8.0.35]# id mysql
+uid=27(mysql) gid=27(mysql) groups=27(mysql)
+[root@test-db mysql8.0.35]#
+
+--need to stop firewall
+vi /etc/selinux/config
+SELINUX=permissive
+
+tail -1000f /var/log/mysqld.log
+
+[root@test-db mysql8.0.35]# rpm -qa | grep mysql
+mysql-commercial-common-8.0.35-1.1.el9.x86_64
+mysql-commercial-client-plugins-8.0.35-1.1.el9.x86_64
+mysql-commercial-libs-8.0.35-1.1.el9.x86_64
+mysql-commercial-client-8.0.35-1.1.el9.x86_64
+mysql-commercial-icu-data-files-8.0.35-1.1.el9.x86_64
+mysql-commercial-server-8.0.35-1.1.el9.x86_64
+[root@test-db mysql8.0.35]#
+
+mkdir -p /datafile/mysql8.0.35/
+mkdir -p /db_backup/binlog/
+chown -R mysql:mysql /datafile/mysql8.0.35
+chmod -R 775 /datafile/mysql8.0.35
+chown -R mysql:mysql /db_backup/binlog/
+chmod -R 775 /db_backup/binlog/
+
+systemctl status mysqld
+systemctl start mysqld
+
+A temporary password is generated for root@localhost: #nCt(q,/!5XC
+
+mysql -u root -p
+#nCt(q,/!5XC
+alter user root@localhost IDENTIFIED WITH mysql_native_password BY 'test#12M';
+flush privileges;
+SELECT User, Host FROM mysql.user;
+
+###################### restore ######################
+--on mysql 8 OS
+[root@test-db db_backup]# chown -R dbteam backup
+
+--for individual DB MariaDB 5 OS
+mysqldump -u root -p test1_db              > test1_db-backup_file.sql
+mysqldump -u root -p test2_db              > test2_db-backup_file.sql
+
+-bash-4.2$ scp *backup_file.sql dbteam@10.10.10.8:/db_backup/backup
+
+--on mysql 8 OS
+[root@test-db db_backup]# chown -R root backup
+
+[root@test-db backup]# mysql -u root -p
+mysql> create database test1_db;
+mysql> create database test2_db;
+
+mysql> flush privileges;
+
+[root@test-db backup]# mysql -u root -p test1_db < test1_db-backup_file.sql
+mysql -u root -p test2_db < test2_db-backup_file.sql
+
+[root@test-db bin]# mysqladmin -u root -p shutdown
+[root@test-db bin]# systemctl start mysqld
+[root@test-db bin]# systemctl status mysqld
+
+########################restore validation check#######################
+mysql -u root -p
+test#12M
+--the "mysql_native_password" is Deprecated on MySQL 8
+
+--this check on mariaDB 5.5.56, need to create users on MySQL 8
+MariaDB [(none)]> SELECT User, Host, DB FROM mysql.db;
+| test1 | 10.10.10.2 | test1_db |
+| test2  | 10.10.10.2 | test2_db  |
+
+CREATE USER 'test1'@'10.10.10.2' IDENTIFIED BY 'test#12M';
+GRANT ALL PRIVILEGES ON bcblgreenpindb_prod.* TO 'test1'@'10.10.10.2';
+FLUSH PRIVILEGES;
+ALTER USER 'test1'@'10.10.10.2' IDENTIFIED WITH mysql_native_password BY 'test#12M';
+FLUSH PRIVILEGES;
+
+CREATE USER 'test2'@'10.10.10.2' IDENTIFIED BY 'test#12M';
+GRANT ALL PRIVILEGES ON jblgreenpindb_prod.* TO 'test2'@'10.10.10.2';
+FLUSH PRIVILEGES;
+ALTER USER 'test2'@'10.10.10.2' IDENTIFIED WITH mysql_native_password BY 'test#12M';
+FLUSH PRIVILEGES;
+
+create user root@'%' IDENTIFIED WITH mysql_native_password BY 'test#12M';
+flush privileges;
+
+SELECT User, Host FROM mysql.user;
+mysql> SELECT User, Host, DB FROM mysql.db;
++---------------+------------+---------------------+
+| User          | Host       | DB                  |
++---------------+------------+---------------------+
+| test1         | 10.10.10.2 | bcblgreenpindb_prod |
+| test2         | 10.10.10.2 | jblgreenpindb_prod  |
+| mysql.session | localhost  | performance_schema  |
+| mysql.sys     | localhost  | sys                 |
++---------------+------------+---------------------+
+7 rows in set (0.00 sec)
+
+############################### Reference ###############################
+https://www.reddit.com/r/mysql/comments/dir53v/is_it_possible_to_upgrade_mysql_55_to_the_latest/
+https://dev.mysql.com/doc/refman/8.0/en/upgrade-binary-package.html#upgrade-procedure-logical
+https://copyprogramming.com/howto/time-function-changes-between-5-5-and-5-6#mysql-installing-or-upgrading-mysql-55-to-56-in-linux-mint
+https://hackernoon.com/upgrading-mysql-55-to-mysql-8-a-step-by-step-guide-ltal35h3
+
